@@ -1,167 +1,213 @@
-import os, time, json
-from flask import Flask, redirect, request, jsonify
-import requests
+"""
+Spotify IoT Controller Server
+-----------------------------
+This Flask server allows an external device (e.g., Arduino IoT setup)
+to control Spotify playback and receive contextual track/audio data.
+
+Key Features:
+ - OAuth login against your personal Spotify account
+ - Playback control endpoints (next, previous, pause/play)
+ - Context endpoint (/update_context) returns current track data + RGB
+ - Token cached locally (no repeated logins)
+ - Reads secrets safely from .env
+
+PREREQUISITES:
+ 1. Register a Spotify App at:
+    https://developer.spotify.com/dashboard
+
+ 2. Add redirect URI in the Spotify developer portal:
+    http://127.0.0.1:8888/callback
+
+ 3. Create `.env` file in SAME directory (see template below)
+
+ 4. Install dependencies:
+    pip install -r requirements.txt
+
+ 5. FIRST RUN:
+    - Flask will auto-trigger Spotify login
+    - Grant permissions ONCE
+    - Token cached for future use
+"""
+
+import time
+import os
+from flask import Flask, request, jsonify
 from dotenv import load_dotenv
+import spotipy
+from spotipy.oauth2 import SpotifyOAuth
 
-load_dotenv()
+# ----------------------------------------------------
+# LOAD ENVIRONMENT VARIABLES
+# ----------------------------------------------------
+load_dotenv()  # reads .env file automatically
 
-SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
-SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
-SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI")
+SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID")
+SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
+SPOTIPY_REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI")
 
+if not SPOTIPY_CLIENT_ID or not SPOTIPY_CLIENT_SECRET or not SPOTIPY_REDIRECT_URI:
+    raise ValueError(
+        "\n❌ Missing environment variables.\n"
+        "Make sure your .env file contains:\n"
+        "SPOTIPY_CLIENT_ID=\nSPOTIPY_CLIENT_SECRET=\nSPOTIPY_REDIRECT_URI=\n"
+    )
+
+# Spotify playback & track permissions
+SCOPE = "user-modify-playback-state user-read-playback-state"
+
+# ----------------------------------------------------
+# INITIALIZE SPOTIFY API CLIENT
+# Token stored locally so login NOT needed every run
+# ----------------------------------------------------
+sp = spotipy.Spotify(
+    auth_manager=SpotifyOAuth(
+        client_id=SPOTIPY_CLIENT_ID,
+        client_secret=SPOTIPY_CLIENT_SECRET,
+        redirect_uri=SPOTIPY_REDIRECT_URI,
+        scope=SCOPE,
+        cache_path=".cache-spotify-iot",
+    )
+)
+
+# ----------------------------------------------------
+# FLASK APP SETUP
+# ----------------------------------------------------
 app = Flask(__name__)
 
-access_token = None
-refresh_token = None
-token_expires_at = 0  # unix time
+
+@app.route("/")
+def home():
+    """Basic status endpoint."""
+    return "Spotify IoT Server is Running!"
 
 
-# ---------- Helpers ----------
-
-def get_basic_auth_header():
-    import base64
-    creds = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode("utf-8")
-    b64 = base64.b64encode(creds).decode("utf-8")
-    return {"Authorization": f"Basic {b64}"}
-
-
-def refresh_access_token():
-    global access_token, refresh_token, token_expires_at
-
-    if refresh_token is None:
-        return False
-
-    url = "https://accounts.spotify.com/api/token"
-    data = {
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-    }
-    headers = get_basic_auth_header()
-    headers["Content-Type"] = "application/x-www-form-urlencoded"
-
-    r = requests.post(url, data=data, headers=headers)
-    if r.status_code != 200:
-        print("Refresh failed:", r.text)
-        return False
-
-    info = r.json()
-    access_token = info["access_token"]
-    # sometimes Spotify doesn’t return a new refresh_token; keep the old one
-    token_expires_at = time.time() + info.get("expires_in", 3600) - 30
-    print("Access token refreshed")
-    return True
+# ----------------------------------------------------
+# SPOTIFY COMMAND ENDPOINTS FOR ARDUINO
+# ----------------------------------------------------
+@app.route("/next")
+def next_track():
+    """Skip to next Spotify track."""
+    try:
+        sp.next_track()
+        return jsonify({"status": "success", "action": "next"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 
-def ensure_token():
-    """Refresh token if missing or expired."""
-    global access_token
-    if access_token is None or time.time() > token_expires_at:
-        return refresh_access_token()
-    return True
+@app.route("/previous")
+def previous_track():
+    """Return to previous Spotify track."""
+    try:
+        sp.previous_track()
+        return jsonify({"status": "success", "action": "previous"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 
-# ---------- Routes ----------
+@app.route("/playpause")
+def play_pause():
+    """
+    Toggle play/pause:
+        - If music currently playing → pause
+        - If paused → resume
+    """
+    try:
+        current = sp.current_playback()
 
-@app.route("/login")
-def login():
-    scope = (
-        "user-read-playback-state "
-        "user-modify-playback-state "
-        "user-read-currently-playing "
-        "user-read-playback-position"
-    )
+        # When active & playing → pause it
+        if current and current.get("is_playing"):
+            sp.pause_playback()
+            action = "paused"
+        else:
+            sp.start_playback()
+            action = "playing"
 
-    auth_url = (
-        "https://accounts.spotify.com/authorize"
-        f"?client_id={SPOTIFY_CLIENT_ID}"
-        "&response_type=code"
-        f"&redirect_uri={SPOTIFY_REDIRECT_URI}"
-        f"&scope={scope.replace(' ', '%20')}"
-    )
-    return redirect(auth_url)
+        return jsonify({"status": "success", "action": action})
 
-
-@app.route("/callback")
-def callback():
-    global access_token, refresh_token, token_expires_at
-
-    code = request.args.get("code")
-    if not code:
-        return "No code provided", 400
-
-    url = "https://accounts.spotify.com/api/token"
-    data = {
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": SPOTIFY_REDIRECT_URI,
-    }
-    headers = get_basic_auth_header()
-    headers["Content-Type"] = "application/x-www-form-urlencoded"
-
-    r = requests.post(url, data=data, headers=headers)
-    if r.status_code != 200:
-        return f"Token request failed: {r.text}", 400
-
-    info = r.json()
-    access_token = info["access_token"]
-    refresh_token = info.get("refresh_token", refresh_token)
-    token_expires_at = time.time() + info.get("expires_in", 3600) - 30
-
-    return "<h1>Spotify linked! You can close this tab.</h1>"
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 
-@app.route("/current")
-def current():
-    """Endpoint that Arduino will poll."""
-    if not ensure_token():
-        return jsonify({"error": "not_authenticated"}), 401
+# ----------------------------------------------------
+# CONTEXTUAL COLOR ENDPOINT
+# Arduino calls:
+#   GET /update_context?temp=26.5
+#
+# Returns:
+#  {
+#    "song": "Track Name",
+#    "artist": "Artist",
+#    "r": ..., "g": ..., "b": ...
+#  }
+# ----------------------------------------------------
+@app.route("/update_context")
+def update_context():
+    """
+    Returns:
+      - Current song name + artist
+      - RGB values influenced by:
+          * Temperature data from Arduino
+          * Track energy (Spotify Audio Features)
+    """
+    temp = request.args.get("temp", type=float)
 
-    headers = {"Authorization": f"Bearer {access_token}"}
+    track_name = "No Song"
+    artist_name = "Unknown"
+    energy = 0.5  # safe fallback
 
-    # 1) what’s currently playing
-    rp = requests.get("https://api.spotify.com/v1/me/player/currently-playing",
-                      headers=headers)
-    if rp.status_code != 200:
-        return jsonify({"error": "no_playback"}), rp.status_code
+    try:
+        current = sp.current_playback()
 
-    data = rp.json()
-    if not data or "item" not in data:
-        return jsonify({"error": "no_track"}), 200
+        # If something is currently playing
+        if current and current.get("item"):
+            track_name = current["item"]["name"]
+            artist_name = current["item"]["artists"][0]["name"]
+            track_id = current["item"]["id"]
 
-    item = data["item"]
-    is_playing = data.get("is_playing", False)
-    song = item.get("name", "")
-    artist = ", ".join(a["name"] for a in item["artists"])
-    duration_ms = item.get("duration_ms", 0)
-    progress_ms = data.get("progress_ms", 0)
-    track_id = item.get("id")
+            # Get Spotify Audio Features (energy, danceability, etc)
+            track_features = sp.audio_features([track_id])
 
-    # 2) audio features (tempo, energy)
-    tempo = None
-    energy = None
-    if track_id:
-        af = requests.get(
-            f"https://api.spotify.com/v1/audio-features/{track_id}",
-            headers=headers,
-        )
-        if af.status_code == 200:
-            feat = af.json()
-            tempo = feat.get("tempo")
-            energy = feat.get("energy")
+            if track_features and track_features[0]:
+                energy = track_features[0].get("energy", 0.5)
+
+    except Exception as e:
+        print(f"Spotify Error: {e}")
+
+    # Determine LED Colors
+    # Hot → RED/ORANGE
+    # Cold → BLUE/TEAL
+    r, g, b = 0, 0, 0
+
+    if temp is not None and temp > 25:
+        r = 255
+        g = int(100 * energy)
+    else:
+        b = 255
+        g = int(100 * energy)
 
     return jsonify(
         {
-            "is_playing": is_playing,
-            "song": song,
-            "artist": artist,
-            "progress_ms": progress_ms,
-            "duration_ms": duration_ms,
-            "tempo": tempo,
-            "energy": energy,
+            "song": track_name[:15],
+            "artist": artist_name[:15],
+            "r": r,
+            "g": g,
+            "b": b,
         }
     )
 
 
+# ----------------------------------------------------
+# APP ENTRY POINT
+# ----------------------------------------------------
 if __name__ == "__main__":
-    # Run on all interfaces so Arduino on same Wi-Fi can reach it
+
+    print("🔐 Launching Spotify OAuth (only needed first run)...")
+    _ = sp.current_user()  # triggers Spotify login popup
+    print("✔️ Spotify login successful (token cached).")
+
+    print("\n🚀 Flask Server Running:")
+    print("   → http://0.0.0.0:5000")
+    print("\n📌 Arduino endpoint example:")
+    print("   http://<YOUR_PC_IP>:5000/update_context?temp=25.0\n")
+
     app.run(host="0.0.0.0", port=5000)

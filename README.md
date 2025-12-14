@@ -1,293 +1,244 @@
-# Spotify Spotlight
+# 🎵 Spotify Spotlight
 
-> MKR IoT Carrier + Flask + Spotify API
-
-## 📖 Overview
-
-This project connects a Spotify account to an **Arduino MKR IoT Carrier**. A Python Flask backend talks to the Spotify Web API and acts as a bridge. The Arduino polls the backend to send temperature data and receive song info + color codes, while the capacitive buttons on the Carrier control music playback.
+> MKR IoT Carrier + Flask + Spotify Web API
 
 ---
 
-## 🏗️ Architecture Overview
+## 📖 Overview
+
+**Spotify Spotlight** connects a Spotify account to an **Arduino MKR IoT Carrier** using a Python Flask backend as a bridge.
+
+The system:
+
+* Authenticates with Spotify using OAuth
+* Retrieves live playback information (song, artist, play/pause state)
+* Maps music characteristics (genre, popularity, explicit flag, tempo) into RGB LED colors
+* Displays a smooth, scrolling “Now Playing” UI on the IoT Carrier
+* Allows playback control via both **capacitive touch buttons** and **Arduino IoT Cloud**
+
+---
+
+## 🏗️ System Architecture
 
 ### 🎵 Spotify Web API
-- Provides user playback information and audio features (energy, valence)
-- Uses the OAuth 2.0 authorization code flow
+
+* Provides current playback state and metadata
+* Uses OAuth 2.0 Authorization Code Flow
+* Requires a **Spotify Premium account** for playback control
+
+---
 
 ### 💻 Python Flask Backend (Laptop)
 
-**Authentication:**
-- Handles Spotify login via a local browser popup (`http://127.0.0.1:8888/callback`)
+The Flask server acts as the **central logic engine**.
 
-**Logic Engine:**
-- Receives temperature from Arduino
-- Fetches song energy from Spotify
-- Calculates the specific RGB color values (Red/Yellow for hot, Blue/Teal for cold)
+#### Authentication
 
-**Endpoints:**
-- `/update_context?temp=XX` - Returns JSON with Song Name, Artist, and RGB values
-- `/next` - Next track
-- `/previous` - Previous track
-- `/playpause` - Play/Pause toggle
+* Opens a local browser for Spotify login
+* Uses redirect URI:
+
+  ```
+  http://127.0.0.1:8888/callback
+  ```
+* Access tokens are cached locally using Spotipy
+
+#### Responsibilities
+
+* Receives temperature + humidity from Arduino
+* Fetches current Spotify playback state
+* Maps music context → RGB color values
+* Exposes REST endpoints for Arduino control
+
+#### API Endpoints
+
+| Endpoint          | Description                                                 |
+| ----------------- | ----------------------------------------------------------- |
+| `/update_context` | Returns JSON with song info, playback state, and RGB values |
+| `/playpause`      | Toggle play / pause                                         |
+| `/next`           | Skip to next track                                          |
+| `/previous`       | Go to previous track                                        |
+| `/volume?set=XX`  | Set volume (0–100)                                          |
+
+---
 
 ### 🤖 Arduino MKR IoT Carrier
 
-- **Network:** Connects to the same Wi-Fi network as the laptop
-- **Input:** Capacitive touch buttons send commands to Flask
-- **Sensors:** Reads ambient temperature and sends it to the server
-- **Output:** Updates the display with song info and sets LEDs to the RGB values calculated by the server
+* **Network:** Connects to the same Wi-Fi network as the laptop
+* **Inputs:**
+
+  * Capacitive touch buttons
+  * Arduino IoT Cloud switches
+* **Sensors:** Reads ambient temperature and humidity
+* **Outputs:**
+
+  * RGB LEDs (solid color or animated patterns)
+  * TFT display with smooth scrolling song + artist text
+  * Play / pause status icon
 
 ---
 
 ## ✅ Prerequisites
 
-- ✨ Spotify Premium account (required for playback control)
-- 🔑 Spotify Developer account and App (Client ID/Secret)
-- 🐍 Python 3 + pip
-- 🔌 Arduino MKR WiFi 1010 + MKR IoT Carrier
-- 📡 A personal Wi-Fi hotspot (Recommended for device-to-device communication)
+* 🎧 Spotify **Premium** account
+* 🔑 Spotify Developer account + registered app
+* 🐍 Python 3.9+
+* 🔌 Arduino MKR WiFi 1010
+* 📟 MKR IoT Carrier
+* 📡 Shared Wi-Fi network or personal hotspot (recommended)
 
 ---
 
-## 🚀 Setup
+## 🚀 Setup Instructions
 
-### 1. Spotify Developer Configuration
+### 1️⃣ Spotify Developer Configuration
 
-1. Create an app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-2. Copy the **Client ID** and **Client Secret**
-3. Add this exact **Redirect URI** in the settings:
+1. Create an app in the
+   [https://developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
+2. Copy:
+
+   * Client ID
+   * Client Secret
+3. Add this **Redirect URI**:
+
    ```
    http://127.0.0.1:8888/callback
    ```
-   > **Note:** This is for the laptop's browser authentication
 
-### 2. Python Backend
+---
 
-1. Clone or download this repository
+### 2️⃣ Python Flask Backend
 
-2. Create a `.env` file in the project folder:
-   ```env
-   SPOTIPY_CLIENT_ID=your_client_id_here
-   SPOTIPY_CLIENT_SECRET=your_client_secret_here
-   SPOTIPY_REDIRECT_URI=http://127.0.0.1:8888/callback
-   ```
+#### Create `.env`
 
-3. Install dependencies:
-   ```bash
-   pip install flask spotipy python-dotenv
-   ```
+```env
+SPOTIPY_CLIENT_ID=your_client_id
+SPOTIPY_CLIENT_SECRET=your_client_secret
+SPOTIPY_REDIRECT_URI=http://127.0.0.1:8888/callback
+```
 
-4. Run the server:
-   ```bash
-   python app.py
-   ```
+#### Install Dependencies
 
-5. Follow the prompt in the terminal to log in via your browser
+```bash
+pip install -r requirements.txt
+```
 
-6. Once authenticated, the server runs on `0.0.0.0:5000`. Note your laptop's **LAN IP Address** (e.g., `192.168.1.157`)
+`requirements.txt`
 
-### 3. Arduino Configuration
+```txt
+flask
+spotipy
+python-dotenv
+requests
+```
 
-1. Open the Arduino IDE
+#### Run Server
 
-2. Create a tab named `arduino_secrets.h`:
-   ```cpp
-   #define SECRET_SSID  "your-hotspot-ssid"
-   #define SECRET_PASS  "your-hotspot-password"
-   ```
+```bash
+python spotify_token_server.py
+```
 
-3. In the main sketch, update the `serverIP` to match your laptop's LAN IP:
-   ```cpp
-   IPAddress serverIP(192, 168, 1, 157); // UPDATE THIS
-   ```
+* A browser will open for Spotify login
+* Server listens on:
 
-4. Upload the sketch to the MKR WiFi 1010
+  ```
+  http://0.0.0.0:5000
+  ```
+* Note your laptop’s **LAN IP** (e.g. `192.168.1.157`)
+
+---
+
+### 3️⃣ Arduino Configuration
+
+#### Wi-Fi Credentials
+
+Create `arduino_secrets.h`:
+
+```cpp
+#define SECRET_SSID  "your_wifi_ssid"
+#define SECRET_PASS  "your_wifi_password"
+```
+
+#### Update Server IP
+
+In the Arduino sketch:
+
+```cpp
+IPAddress serverIP(192, 168, 1, 157); // CHANGE TO YOUR LAPTOP IP
+```
+
+#### Upload Sketch
+
+* Board: **Arduino MKR WiFi 1010**
+* Upload the provided sketch
 
 ---
 
 ## 🎮 Running the System
 
-1. **Laptop:** Ensure `app.py` is running and says "Server is listening"
-2. **Spotify:** Open Spotify on your laptop/phone and play a track manually (to wake up the device)
-3. **Arduino:** Power it on
-4. **Loop:** Every 10 seconds, it sends temp to the laptop and updates the LEDs/Screen
+1. Start the Flask server
+2. Open Spotify on any device and start playback
+3. Power on the MKR IoT Carrier
+4. Arduino polls the server every ~10 seconds
 
-### Button Controls
+### Touch Controls
 
-| Button | Function |
-|--------|----------|
-| Button 0 | Previous Track |
-| Button 2 | Play/Pause |
-| Button 4 | Next Track |
+| Touch Button | Action         |
+| ------------ | -------------- |
+| TOUCH0       | Previous Track |
+| TOUCH2       | Play / Pause   |
+| TOUCH4       | Next Track     |
+
+---
+
+## 🖥️ Display Features
+
+* Smooth horizontal scrolling for long song titles
+* Play / pause icon synced with Spotify playback
+* Minimal redraw strategy (no flicker or ghosting)
+* Color-coded song mood display
+
+---
+
+## 💡 LED Behavior
+
+* **TEMP Mode:** Color influenced by temperature + genre
+* **PATTERN Mode:** Pulse / Blink animations
+* **BPM Mode:** Color derived from tempo and energy
+* **Cloud Color Override:** Manual color selection via IoT Cloud
 
 ---
 
 ## 🔧 Troubleshooting
 
-### "Connection Failed" on Arduino
+### Arduino Can’t Connect to Server
 
-- ✅ Ensure Laptop and Arduino are on the **exact same WiFi**
-- ✅ Check if Windows Firewall is blocking **Port 5000** (Try turning off Private Network Firewall temporarily)
-- ✅ Verify the IP address in the Arduino sketch matches `ipconfig` on the laptop
+* Ensure **same Wi-Fi network**
+* Confirm IP address matches laptop
+* Check firewall allows port **5000**
 
-### "Spotify Error: Code must be supplied"
+### Spotify OAuth Errors
 
-- This happens during login if the Redirect URI doesn't match
-- ✅ Ensure the `.env` file and Spotify Dashboard both use `http://127.0.0.1:8888/callback`
+* Redirect URI must match **exactly**
+* `.env` file must match Spotify dashboard
+* Restart Flask server after changes
 
 ---
 
-## 📝 Arduino Sketch Reference
+## 🧠 Notes
 
-Use this code for the MKR WiFi 1010:
-
-## 📝 Arduino Sketch Reference
-
-Use this code for the MKR WiFi 1010:
-
-```cpp
-/* Spotify Spotlight - Group Project */
-#include <Arduino_MKRIoTCarrier.h>
-#include <WiFiNINA.h>
-#include <ArduinoHttpClient.h>
-#include <ArduinoJson.h>
-#include "arduino_secrets.h" 
-
-MKRIoTCarrier carrier;
-
-char ssid[] = SECRET_SSID;
-char pass[] = SECRET_PASS;
-
-// UPDATE THIS TO YOUR LAPTOP'S IP ADDRESS
-IPAddress serverIP(192, 168, 1, 157); 
-int serverPort = 5000;
-
-WiFiClient wifi;
-HttpClient client = HttpClient(wifi, serverIP, serverPort);
-
-unsigned long lastCheck = 0;
-const long interval = 2000; // Check context every 2 seconds
-
-void setup() {
-  Serial.begin(9600);
-  
-  // Set to false if using the board without the plastic case
-  CARRIER_CASE = true; 
-  if (!carrier.begin()) {
-    Serial.println("Carrier not connected");
-    while (1);
-  }
-
-  // Connect to WiFi
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print("Connecting to ");
-    Serial.println(ssid);
-    WiFi.begin(ssid, pass);
-    delay(1000);
-  }
-  Serial.println("Connected to WiFi");
-  
-  carrier.display.fillScreen(ST77XX_BLACK);
-  carrier.display.setRotation(0);
-  carrier.display.setTextColor(ST77XX_WHITE);
-  carrier.display.setTextSize(2);
-  carrier.display.setCursor(20, 100);
-  carrier.display.print("Spotify IoT");
-}
-
-void loop() {
-  // Update touch buttons
-  carrier.Buttons.update();
-
-  // --- CONTROLS ---
-  if (carrier.Buttons.onTouchDown(TOUCH0)) {
-    sendRequest("/previous");
-  }
-
-  if (carrier.Buttons.onTouchDown(TOUCH2)) {
-    sendRequest("/playpause");
-  }
-
-  if (carrier.Buttons.onTouchDown(TOUCH4)) {
-    sendRequest("/next");
-  }
-
-  // --- DATA LOOP ---
-  if (millis() - lastCheck >= interval) {
-    lastCheck = millis();
-    
-    float temperature = carrier.Env.readTemperature();
-    
-    // Build the request: /update_context?temp=25.5
-    String url = "/update_context?temp=" + String(temperature);
-    
-    client.get(url);
-    int statusCode = client.responseStatusCode();
-    String response = client.responseBody();
-
-    if(statusCode == 200) {
-      parseAndDisplay(response);
-    } else {
-      Serial.print("Error: "); Serial.println(statusCode);
-    }
-  }
-}
-
-void sendRequest(String endpoint) {
-  Serial.print("Sending: "); Serial.println(endpoint);
-  client.get(endpoint);
-  // We don't strictly need to parse the response for controls, just trigger it
-  client.responseStatusCode(); 
-  client.responseBody();
-}
-
-void parseAndDisplay(String json) {
-  // Parse JSON
-  StaticJsonDocument<512> doc;
-  DeserializationError error = deserializeJson(doc, json);
-
-  if (error) {
-    Serial.println("JSON Parse Error");
-    return;
-  }
-
-  const char* song = doc["song"];
-  const char* artist = doc["artist"];
-  int r = doc["r"];
-  int g = doc["g"];
-  int b = doc["b"];
-
-  // Update Display
-  carrier.display.fillScreen(ST77XX_BLACK);
-  
-  carrier.display.setTextSize(1);
-  carrier.display.setCursor(20, 60);
-  carrier.display.setTextColor(ST77XX_WHITE);
-  carrier.display.println("NOW PLAYING:");
-  
-  carrier.display.setTextSize(2);
-  carrier.display.setCursor(20, 80);
-  // Set text color to match the calculated mood color
-  carrier.display.setTextColor(carrier.display.color565(r, g, b));
-  carrier.display.println(song);
-  
-  carrier.display.setTextSize(1);
-  carrier.display.setCursor(20, 120);
-  carrier.display.setTextColor(ST77XX_WHITE);
-  carrier.display.println(artist);
-
-  // Update LEDs
-  carrier.leds.fill(carrier.leds.Color(r, g, b), 0, 5);
-  carrier.leds.show();
-}
-```
+* Spotify playback control requires an **active device**
+* If playback commands fail, open Spotify manually once
+* OAuth tokens are cached to avoid repeated logins
 
 ---
 
 ## 📄 License
 
-This project is open source. See the LICENSE file for details.
+Open source for educational use.
+
+---
 
 ## 👥 Contributors
 
-Group Project - INST347
+INST347 — Group Project
+Arduino + Flask + Spotify Integration

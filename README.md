@@ -240,5 +240,11 @@ Open source for educational use.
 
 ## 👥 Contributors
 
+- **Joshua Kwam**
+- **Joseph Cin**
+- **Benjamin Donkor**
+- **Cadell Otoo**
+- **Oluwaemi Abiodun**
+
 INST347 — Group Project
 Arduino + Flask + Spotify Integration

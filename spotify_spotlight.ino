@@ -18,8 +18,6 @@ Purpose:
 Server:
 - Flask server running on a laptop
 - Endpoints: /update_context, /playpause, /next, /previous, /volume
-
-Author: Philip Kwan
 =========================================================
 */
 

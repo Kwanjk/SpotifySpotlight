@@ -7,7 +7,7 @@ Hardware:
 - Arduino MKR WiFi 1010
 - MKR IoT Carrier
 
-Purpose:
+Purpose: 
 - Connect to Arduino IoT Cloud
 - Communicate with a Flask-based Spotify server
 - Control Spotify playback (next, previous, play/pause)
